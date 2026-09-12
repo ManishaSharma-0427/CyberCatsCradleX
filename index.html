@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CYBER CAT'S CRADLE // 2077</title>
+<style>
+  :root{
+    --cyan:#00fff2;
+    --blue:#2979ff;
+    --magenta:#ff00e6;
+    --yellow:#fff200;
+    --lime:#39ff8c;
+    --orange:#ff8c00;
+    --panel-bg: rgba(8, 14, 28, 0.45);
+    --panel-border: rgba(0, 255, 242, 0.35);
+  }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background:#01030a; overflow:hidden;
+    font-family:'Consolas','Courier New',monospace;
+    color:var(--cyan);
+    -webkit-font-smoothing:antialiased;
+  }
+  #stage{ position:relative; width:100vw; height:100vh; }
+  canvas{ display:block; }
+
+  /* ---------- HUD (glassmorphism) ---------- */
+  .hud-panel{
+    position:fixed;
+    background:var(--panel-bg);
+    border:1px solid var(--panel-border);
+    border-radius:10px;
+    backdrop-filter: blur(10px) saturate(160%);
+    -webkit-backdrop-filter: blur(10px) saturate(160%);
+    box-shadow: 0 0 18px rgba(0,255,242,0.15), inset 0 0 20px rgba(0,255,242,0.05);
+    padding:12px 16px;
+    z-index:15;
+    pointer-events:none;
+    font-size:11px;
+    letter-spacing:1.5px;
+    text-transform:uppercase;
+  }
+  #hud-top{ top:16px; left:16px; min-width:220px; }
+  #hud-top .row{ display:flex; justify-content:space-between; margin:2px 0; opacity:0.9; }
+  #hud-top .label{ color:rgba(0,255,242,0.55); }
+  #hud-top .val{ color:#fff; text-shadow:0 0 6px var(--cyan); font-weight:bold; }
+  #hud-title{ top:16px; right:16px; text-align:right; pointer-events:none; }
+  #hud-title .t1{ font-size:16px; font-weight:bold; letter-spacing:4px; color:#fff; text-shadow:0 0 12px var(--magenta), 0 0 22px var(--cyan);}
+  #hud-title .t2{ font-size:10px; opacity:0.6; margin-top:4px; }
+  #hud-gesture{
+    bottom:16px; left:50%; transform:translateX(-50%);
+    text-align:center; min-width:260px;
+  }
+  #hud-gesture .g{ font-size:15px; font-weight:bold; color:#fff; text-shadow:0 0 10px var(--yellow); letter-spacing:3px; }
+
+  #mute-btn{
+    position:fixed; bottom:16px; right:16px; z-index:20;
+    background:var(--panel-bg); border:1px solid var(--panel-border); border-radius:8px;
+    color:var(--cyan); font-family:inherit; font-size:11px; letter-spacing:2px;
+    padding:10px 14px; cursor:pointer; text-transform:uppercase;
+    backdrop-filter:blur(8px);
+  }
+  #mute-btn:hover{ box-shadow:0 0 14px var(--cyan); }
+
+  #boot-message{
+    position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+    text-align:center; max-width:520px; z-index:30;
+    color:var(--magenta); text-shadow:0 0 12px var(--magenta);
+    font-size:15px; line-height:1.7; letter-spacing:1px;
+  }
+  #boot-message span{ font-size:11px; opacity:0.65; color:var(--cyan); text-shadow:none; }
+  #boot-message.hidden{ display:none; }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <div id="hud-top" class="hud-panel">
+    <div class="row"><span class="label">FPS</span><span class="val" id="hud-fps">--</span></div>
+    <div class="row"><span class="label">Frame</span><span class="val" id="hud-frametime">-- ms</span></div>
+    <div class="row"><span class="label">Hands</span><span class="val" id="hud-hands">0</span></div>
+    <div class="row"><span class="label">Particles</span><span class="val" id="hud-particles">0</span></div>
+    <div class="row"><span class="label">Strings</span><span class="val" id="hud-strings">0</span></div>
+    <div class="row"><span class="label">Track Q.</span><span class="val" id="hud-quality">--%</span></div>
+    <div class="row"><span class="label">CPU Est.</span><span class="val" id="hud-cpu">--%</span></div>
+  </div>
+
+  <div id="hud-title" class="hud-panel">
+    <div class="t1">CAT'S CRADLE</div>
+    <div class="t2">// CYBER 2077 HAND ENGINE</div>
+  </div>
+
+  <div id="hud-gesture" class="hud-panel">
+    <div class="g" id="hud-gesture-text">NO HANDS DETECTED</div>
+  </div>
+
+  <button id="mute-btn">🔊 AUDIO ON</button>
+
+  <div id="boot-message">
+    INITIALIZING NEURAL INTERFACE...<br>
+    <span>Grant camera permission when prompted. Open this file directly in a browser
+    (not a restricted preview) so the webcam and MediaPipe model can load.</span>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+<script>
+/* =====================================================================================
+   CYBER CAT'S CRADLE 2077
+   Sections: Configuration | Utilities | MediaPipe | Physics | Gesture Recognition |
+             Rendering | Particles | Laser System | Audio | Animation | HUD | Main Loop
+   ===================================================================================== */
+
+/* ---------------------------------------------------------------------------------
+   1. CONFIGURATION
+   --------------------------------------------------------------------------------- */
+const CFG = {
+  video: { width: 1280, height: 720 },
+  smoothing: 0.4,              // exponential filter alpha (higher = snappier)
+  handSizeRef: 0.001,          // populated at runtime, avoids div by zero
+  maxParticles: 500,
+  spring: { stiffness: 0.16, damping: 0.80 },
+  weaveExtra: true,            // add crossing "weave" connections between adjacent tips
+  colors: {
+    thumb:  [0, 255, 242],     // cyan
+    index:  [41, 121, 255],    // electric blue
+    middle: [255, 0, 230],     // magenta
+    ring:   [255, 242, 0],     // yellow
+    pinky:  [57, 255, 140],    // lime green
+    palm:   [255, 255, 255],   // white
+    wrist:  [255, 140, 0]      // orange
+  }
+};
+
+// Landmark topology
+const WRIST = 0;
+const FINGER_GROUPS = {
+  thumb:  [1, 2, 3, 4],
+  index:  [5, 6, 7, 8],
+  middle: [9, 10, 11, 12],
+  ring:   [13, 14, 15, 16],
+  pinky:  [17, 18, 19, 20]
+};
+const FINGERTIPS = { thumb: 4, index: 8, middle: 12, ring: 16, pinky: 20 };
+const FINGER_PIP  = { thumb: 2, index: 6, middle: 10, ring: 14, pinky: 18 };
+const FINGER_MCP  = { thumb: 1, index: 5, middle: 9, ring: 13, pinky: 17 };
+
+const BONES = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],
+  [0,17]
+];
+
+function landmarkFinger(i) {
+  for (const f in FINGER_GROUPS) if (FINGER_GROUPS[f].includes(i)) return f;
+  return (i === 0) ? 'wrist' : 'palm';
+}
+function landmarkColor(i) {
+  if (i === 0) return CFG.colors.wrist;
+  const f = landmarkFinger(i);
+  return CFG.colors[f] || CFG.colors.palm;
+}
+function boneColor(a, b) {
+  const fa = landmarkFinger(a), fb = landmarkFinger(b);
+  const c = CFG.colors[fb] || CFG.colors[fa] || CFG.colors.palm;
+  return c;
+}
+
+/* ---------------------------------------------------------------------------------
+   2. UTILITIES
+   --------------------------------------------------------------------------------- */
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function dist2(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+function rgba(c, a) { return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
+function mixColor(c1, c2, t) {
+  return [
+    Math.round(c1[0] + (c2[0] - c1[0]) * t),
+    Math.round(c1[1] + (c2[1] - c1[1]) * t),
+    Math.round(c1[2] + (c2[2] - c1[2]) * t)
+  ];
+}
+// cyan -> magenta -> yellow cycling palette (used for cradle string energy flow)
+function neonCycle(t) {
+  t = ((t % 1) + 1) % 1;
+  if (t < 0.5) return mixColor([0,255,242],[255,0,230], t / 0.5);
+  return mixColor([255,0,230],[255,242,0], (t - 0.5) / 0.5);
+}
+
+// Simple exponential smoothing filter per point (reduces jitter, cheap CPU cost)
+class SmoothPoint {
+  constructor(alpha) { this.alpha = alpha; this.x = null; this.y = null; this.z = 0; }
+  push(x, y, z) {
+    if (this.x === null) { this.x = x; this.y = y; this.z = z; }
+    else {
+      this.x += (x - this.x) * this.alpha;
+      this.y += (y - this.y) * this.alpha;
+      this.z += (z - this.z) * this.alpha;
+    }
+    return this;
+  }
+}
+
+// Object pool base — avoids GC churn from constant particle allocation
+class Pool {
+  constructor(size, factory) {
+    this.items = new Array(size);
+    for (let i = 0; i < size; i++) this.items[i] = factory();
+  }
+  acquire() {
+    for (const it of this.items) if (!it.active) return it;
+    return null; // pool exhausted, drop the spawn silently (perf guard)
+  }
+  activeCount() {
+    let n = 0;
+    for (const it of this.items) if (it.active) n++;
+    return n;
+  }
+}
+
+/* ---------------------------------------------------------------------------------
+   3. MEDIAPIPE (hand tracking)
+   --------------------------------------------------------------------------------- */
+let video, hands, camera;
+let latestHands = []; // [{label, score, landmarks:[{x,y,z}...] }]
+let handFilters = { Left: null, Right: null }; // arrays of SmoothPoint per landmark
+let trackedRecently = { Left: 0, Right: 0 };   // frame counters for fade-out
+
+function initHands() {
+  hands = new Hands({
+    locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+  });
+  hands.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.65,
+    minTrackingConfidence: 0.65,
+    selfieMode: true
+  });
+  hands.onResults(onHandsResults);
+
+  camera = new Camera(video.elt, {
+    onFrame: async () => {
+      try { await hands.send({ image: video.elt }); } catch (e) { /* transient */ }
+    },
+    width: CFG.video.width,
+    height: CFG.video.height
+  });
+
+  camera.start().then(() => {
+    hideBoot();
+    setHudStatusReady();
+  }).catch((err) => {
+    showBoot('CAMERA ACCESS DENIED<br><span>Grant permission and reload to reconnect the neural interface.</span>');
+    console.error(err);
+  });
+}
+
+function onHandsResults(results) {
+  const parsed = [];
+  if (results.multiHandLandmarks && results.multiHandedness) {
+    for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+      parsed.push({
+        label: results.multiHandedness[i].label,     // "Left" | "Right"
+        score: results.multiHandedness[i].score || 0.9,
+        landmarks: results.multiHandLandmarks[i]
+      });
+    }
+  }
+  latestHands = parsed;
+}
+
+// Convert + smooth raw normalized landmarks into mirrored screen-space points
+function getSmoothedScreenHands() {
+  const seen = new Set();
+  const out = [];
+  for (const h of latestHands) {
+    seen.add(h.label);
+    trackedRecently[h.label] = 6; // grace-frames before considered "lost"
+
+    if (!handFilters[h.label]) {
+      handFilters[h.label] = Array.from({ length: 21 }, () => new SmoothPoint(CFG.smoothing));
+    }
+    const filters = handFilters[h.label];
+    const pts = h.landmarks.map((lm, i) => {
+      const sx = width - lm.x * width;   // mirrored x
+      const sy = lm.y * height;
+      const f = filters[i].push(sx, sy, lm.z);
+      return { x: f.x, y: f.y, z: f.z };
+    });
+    out.push({ label: h.label, score: h.score, landmarks: pts });
+  }
+  for (const label of ['Left', 'Right']) {
+    if (!seen.has(label) && trackedRecently[label] > 0) trackedRecently[label]--;
+    if (!seen.has(label) && trackedRecently[label] <= 0) handFilters[label] = null;
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------------------------------
+   4. PHYSICS (spring-driven cradle strings)
+   --------------------------------------------------------------------------------- */
+// A CradleSpring drifts its control point toward a moving target with inertia/damping,
+// producing the "elastic" bounce/sag when hands move.
+class CradleSpring {
+  constructor(offsetSeed) {
+    this.px = null; this.py = null;
+    this.vx = 0; this.vy = 0;
+    this.offsetSeed = offsetSeed;
+  }
+  update(ax, ay, bx, by, t) {
+    const mx = (ax + bx) / 2;
+    const my = (ay + by) / 2;
+    // perpendicular sag/weave offset so strings don't all collapse to a straight line
+    const dx = bx - ax, dy = by - ay;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    const nx = -dy / len, ny = dx / len;
+    const wave = Math.sin(t * 2.2 + this.offsetSeed) * (len * 0.06 + 8);
+    const tx = mx + nx * wave;
+    const ty = my + ny * wave;
+
+    if (this.px === null) { this.px = tx; this.py = ty; }
+    const fx = (tx - this.px) * CFG.spring.stiffness;
+    const fy = (ty - this.py) * CFG.spring.stiffness;
+    this.vx = (this.vx + fx) * CFG.spring.damping;
+    this.vy = (this.vy + fy) * CFG.spring.damping;
+    this.px += this.vx;
+    this.py += this.vy;
+    return { x: this.px, y: this.py };
+  }
+}
+
+const cradleSprings = {}; // keyed by connection id -> CradleSpring
+
+/* ---------------------------------------------------------------------------------
+   5. GESTURE RECOGNITION
+   --------------------------------------------------------------------------------- */
+function handSize(lm) {
+  return Math.max(20, dist2(lm[0].x, lm[0].y, lm[9].x, lm[9].y));
+}
+function fingerExtended(lm, finger, hs) {
+  const tip = lm[FINGER_MCP[finger] + 3] || lm[FINGERTIPS[finger]];
+  const pip = lm[FINGER_PIP[finger]];
+  const wrist = lm[0];
+  if (finger === 'thumb') {
+    const indexMcp = lm[FINGER_MCP.index];
+    return dist2(lm[4].x, lm[4].y, indexMcp.x, indexMcp.y) > hs * 0.55;
+  }
+  return dist2(wrist.x, wrist.y, tip.x, tip.y) > dist2(wrist.x, wrist.y, pip.x, pip.y) * 1.08;
+}
+function isPinch(lm, hs) {
+  return dist2(lm[4].x, lm[4].y, lm[8].x, lm[8].y) < hs * 0.42;
+}
+
+// Returns { name, hand } for a single hand's landmarks
+function recognizeGesture(lm, label) {
+  const hs = handSize(lm);
+  const ext = {
+    thumb: fingerExtended(lm, 'thumb', hs),
+    index: fingerExtended(lm, 'index', hs),
+    middle: fingerExtended(lm, 'middle', hs),
+    ring: fingerExtended(lm, 'ring', hs),
+    pinky: fingerExtended(lm, 'pinky', hs)
+  };
+  const pinch = isPinch(lm, hs);
+  const nExtended = Object.values(ext).filter(Boolean).length;
+
+  if (pinch && ext.middle && ext.ring && ext.pinky) return { name: 'OK-SIGN', hand: label };
+  if (pinch) return { name: 'PINCH', hand: label };
+  if (!ext.thumb && !ext.index && !ext.middle && !ext.ring && !ext.pinky) return { name: 'FIST', hand: label };
+  if (ext.thumb && ext.index && !ext.middle && !ext.ring && !ext.pinky) return { name: 'FINGER-GUN', hand: label };
+  if (!ext.thumb && ext.index && !ext.middle && !ext.ring && !ext.pinky) return { name: 'POINT', hand: label };
+  if (!ext.thumb && ext.index && ext.middle && !ext.ring && !ext.pinky) return { name: 'PEACE', hand: label };
+  if (ext.thumb && !ext.index && !ext.middle && !ext.ring && !ext.pinky && lm[4].y < lm[0].y - hs * 0.3)
+    return { name: 'THUMBS-UP', hand: label };
+  if (nExtended >= 4) return { name: 'OPEN-PALM', hand: label };
+  return { name: 'NEUTRAL', hand: label };
+}
+
+let activeGestures = {}; // Left/Right -> last gesture name, used to detect *changes* (edge trigger)
+
+/* ---------------------------------------------------------------------------------
+   6 & 7. PARTICLES + LASER/EFFECT SYSTEM
+   --------------------------------------------------------------------------------- */
+const particlePool = new Pool(CFG.maxParticles, () => ({
+  active: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 1,
+  size: 2, color: [255,255,255], rot: 0, vrot: 0, gravity: 0
+}));
+
+function spawnParticles(x, y, color, count, opts = {}) {
+  const speed = opts.speed || 3.5;
+  const life = opts.life || 40;
+  const gravity = opts.gravity !== undefined ? opts.gravity : 0.04;
+  for (let i = 0; i < count; i++) {
+    const p = particlePool.acquire();
+    if (!p) break;
+    const ang = Math.random() * Math.PI * 2;
+    const spd = (0.4 + Math.random() * 0.6) * speed;
+    p.active = true;
+    p.x = x; p.y = y;
+    p.vx = Math.cos(ang) * spd;
+    p.vy = Math.sin(ang) * spd;
+    p.life = life * (0.6 + Math.random() * 0.6);
+    p.maxLife = p.life;
+    p.size = 2 + Math.random() * 4;
+    p.color = color;
+    p.rot = Math.random() * Math.PI * 2;
+    p.vrot = (Math.random() - 0.5) * 0.3;
+    p.gravity = gravity;
+  }
+}
+
+function updateAndDrawParticles(ctx) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter'; // additive blending
+  for (const p of particlePool.items) {
+    if (!p.active) continue;
+    p.life--;
+    if (p.life <= 0) { p.active = false; continue; }
+    p.vy += p.gravity;
+    p.x += p.vx; p.y += p.vy;
+    p.rot += p.vrot;
+    const t = p.life / p.maxLife;
+    const alpha = t;
+    const size = p.size * (0.5 + t * 0.7);
+
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.rot);
+    ctx.shadowBlur = 14 * t + 4;
+    ctx.shadowColor = rgba(p.color, alpha);
+    ctx.fillStyle = rgba(p.color, alpha);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, size, size * 0.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+// Camera FX state
+let screenShake = 0;
+let screenFlash = 0;
+
+function triggerExplosion(x, y, color) {
+  spawnParticles(x, y, color, 34, { speed: 6, life: 34, gravity: 0.06 });
+  screenShake = Math.min(18, screenShake + 10);
+  screenFlash = Math.min(1, screenFlash + 0.35);
+  playSpark();
+}
+function triggerShockwave(x, y, color, ctx) {
+  shockwaves.push({ x, y, r: 4, alpha: 1, color });
+  playPulse();
+}
+let shockwaves = [];
+function updateAndDrawShockwaves(ctx) {
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const s = shockwaves[i];
+    s.r += 9;
+    s.alpha -= 0.03;
+    if (s.alpha <= 0) { shockwaves.splice(i, 1); continue; }
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = rgba(s.color, s.alpha);
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = rgba(s.color, s.alpha);
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// Laser beams fired from a "POINT" gesture, fading trail
+let laserBeams = [];
+function fireLaser(x, y, ang, color) {
+  laserBeams.push({ x, y, ang, life: 14, color });
+  playLaser();
+}
+function updateAndDrawLasers(ctx) {
+  for (let i = laserBeams.length - 1; i >= 0; i--) {
+    const b = laserBeams[i];
+    b.life--;
+    if (b.life <= 0) { laserBeams.splice(i, 1); continue; }
+    const len = 1400;
+    const ex = b.x + Math.cos(b.ang) * len;
+    const ey = b.y + Math.sin(b.ang) * len;
+    const t = b.life / 14;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    for (const [w, a] of [[8, 0.12],[4,0.35],[1.6,0.9]]) {
+      ctx.lineWidth = w;
+      ctx.strokeStyle = rgba(b.color, a * t);
+      ctx.shadowBlur = 24;
+      ctx.shadowColor = rgba(b.color, a * t);
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// Lightning arc for pinch (jagged segments between thumb+index of two hands, or self)
+function drawLightningArc(ctx, ax, ay, bx, by, color, seed) {
+  const segs = 9;
+  let px = ax, py = ay;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = rgba(color, 0.9);
+  ctx.lineWidth = 2;
+  ctx.shadowBlur = 18;
+  ctx.shadowColor = rgba(color, 0.9);
+  ctx.beginPath();
+  ctx.moveTo(px, py);
+  for (let i = 1; i <= segs; i++) {
+    const t = i / segs;
+    const jitter = (i === segs) ? 0 : (Math.sin(seed * 13 + i * 7 + frameCount * 0.5) * 10);
+    const nx = ax + (bx - ax) * t + jitter;
+    const ny = ay + (by - ay) * t + (Math.cos(seed * 9 + i * 3) * 6);
+    ctx.lineTo(nx, ny);
+    px = nx; py = ny;
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Energy shield (open palm) — translucent pulsing arc around the palm
+function drawShield(ctx, cx, cy, radius, color, t) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const pulse = 1 + Math.sin(t * 4) * 0.06;
+  ctx.strokeStyle = rgba(color, 0.35);
+  ctx.lineWidth = 2;
+  ctx.shadowBlur = 22;
+  ctx.shadowColor = rgba(color, 0.6);
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * pulse, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = rgba(color, 0.05);
+  ctx.fill();
+  ctx.restore();
+}
+
+/* ---------------------------------------------------------------------------------
+   8. AUDIO (generative WebAudio, no sample files)
+   --------------------------------------------------------------------------------- */
+let audioCtx = null;
+let audioMuted = false;
+let laserHumGain = null;
+
+function ensureAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+function masterGain() {
+  const g = audioCtx.createGain();
+  g.gain.value = audioMuted ? 0 : 0.5;
+  g.connect(audioCtx.destination);
+  return g;
+}
+function playLaser() {
+  if (!audioCtx) return;
+  const o = audioCtx.createOscillator();
+  const g = masterGain();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(1400, audioCtx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(220, audioCtx.currentTime + 0.16);
+  g.gain.setValueAtTime(0.25, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.18);
+  o.connect(g);
+  o.start(); o.stop(audioCtx.currentTime + 0.2);
+}
+function noiseBuffer(duration) {
+  const sr = audioCtx.sampleRate;
+  const buf = audioCtx.createBuffer(1, sr * duration, sr);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+  return buf;
+}
+function playSpark() {
+  if (!audioCtx) return;
+  const src = audioCtx.createBufferSource();
+  src.buffer = noiseBuffer(0.18);
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = 'highpass'; filt.frequency.value = 1800;
+  const g = masterGain();
+  src.connect(filt); filt.connect(g);
+  src.start();
+}
+function playExplosion() {
+  if (!audioCtx) return;
+  const src = audioCtx.createBufferSource();
+  src.buffer = noiseBuffer(0.4);
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = 'lowpass'; filt.frequency.setValueAtTime(1200, audioCtx.currentTime);
+  filt.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.4);
+  const g = masterGain();
+  g.gain.setValueAtTime(0.5, audioCtx.currentTime);
+  src.connect(filt); filt.connect(g);
+  src.start();
+}
+function playPulse() {
+  if (!audioCtx) return;
+  const o = audioCtx.createOscillator();
+  const g = masterGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(220, audioCtx.currentTime);
+  g.gain.setValueAtTime(0.3, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+  o.connect(g);
+  o.start(); o.stop(audioCtx.currentTime + 0.3);
+}
+
+/* ---------------------------------------------------------------------------------
+   9. ANIMATION / BACKGROUND (procedural cyberpunk backdrop, no raw webcam shown)
+   --------------------------------------------------------------------------------- */
+let stars = [];
+let rainCols = [];
+const RAIN_CHARS = '01アイウエオカキクケコサシスセソ$#%&';
+
+function initBackground() {
+  stars = Array.from({ length: 140 }, () => ({
+    x: Math.random() * width, y: Math.random() * height,
+    r: Math.random() * 1.6 + 0.3, tw: Math.random() * Math.PI * 2
+  }));
+  const colCount = Math.floor(width / 22);
+  rainCols = Array.from({ length: colCount }, (_, i) => ({
+    x: i * 22 + 8, y: Math.random() * -height, speed: 2 + Math.random() * 4,
+    len: 6 + Math.floor(Math.random() * 10)
+  }));
+}
+
+function drawBackground(ctx, t) {
+  // animated midnight-blue gradient
+  const g = ctx.createLinearGradient(0, 0, width, height);
+  g.addColorStop(0, `hsl(${220 + Math.sin(t*0.05)*8}, 70%, ${5 + Math.sin(t*0.03)*1.5}%)`);
+  g.addColorStop(0.5, '#050a18');
+  g.addColorStop(1, '#01030a');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, width, height);
+
+  // procedural stars, twinkling
+  ctx.save();
+  for (const s of stars) {
+    const tw = 0.4 + Math.sin(t * 1.5 + s.tw) * 0.3 + 0.3;
+    ctx.fillStyle = `rgba(180,220,255,${tw * 0.6})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+
+  // volumetric fog bands (soft moving translucent ellipses)
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 4; i++) {
+    const fx = width * (0.2 + 0.2 * i) + Math.sin(t * 0.2 + i) * 80;
+    const fy = height * 0.7 + Math.cos(t * 0.15 + i) * 40;
+    const rg = ctx.createRadialGradient(fx, fy, 10, fx, fy, 260);
+    rg.addColorStop(0, i % 2 === 0 ? 'rgba(0,255,242,0.05)' : 'rgba(255,0,230,0.04)');
+    rg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = rg;
+    ctx.fillRect(fx - 260, fy - 260, 520, 520);
+  }
+  ctx.restore();
+
+  // energy waves
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let w = 0; w < 3; w++) {
+    ctx.strokeStyle = `rgba(${w===0?'0,255,242':w===1?'255,0,230':'255,242,0'},0.10)`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let x = 0; x <= width; x += 12) {
+      const y = height * (0.3 + w * 0.2) + Math.sin(x * 0.01 + t * (1.2 + w * 0.4)) * 26;
+      if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // digital rain
+  ctx.save();
+  ctx.font = '14px monospace';
+  for (const c of rainCols) {
+    c.y += c.speed;
+    if (c.y > height + c.len * 16) c.y = -Math.random() * height;
+    for (let k = 0; k < c.len; k++) {
+      const yy = c.y - k * 16;
+      if (yy < 0 || yy > height) continue;
+      const alpha = 1 - k / c.len;
+      ctx.fillStyle = k === 0 ? `rgba(220,255,255,${alpha})` : `rgba(0,255,180,${alpha * 0.5})`;
+      const ch = RAIN_CHARS[Math.floor((c.x + k + Math.floor(t*4)) ) % RAIN_CHARS.length];
+      ctx.fillText(ch, c.x, yy);
+    }
+  }
+  ctx.restore();
+}
+
+function drawVignetteAndGrain(ctx, t) {
+  // animated vignette
+  const rg = ctx.createRadialGradient(width/2, height/2, height*0.25, width/2, height/2, height*0.78);
+  rg.addColorStop(0, 'rgba(0,0,0,0)');
+  rg.addColorStop(1, `rgba(0,0,0,${0.55 + Math.sin(t*0.4)*0.03})`);
+  ctx.fillStyle = rg;
+  ctx.fillRect(0, 0, width, height);
+
+  // scanlines
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.10)';
+  for (let y = 0; y < height; y += 3) ctx.fillRect(0, y, width, 1);
+  ctx.restore();
+
+  // grain noise (sparse dots, cheap approximation)
+  ctx.save();
+  ctx.globalAlpha = 0.05;
+  for (let i = 0; i < 60; i++) {
+    ctx.fillStyle = Math.random() < 0.5 ? '#fff' : '#000';
+    ctx.fillRect(Math.random() * width, Math.random() * height, 1, 1);
+  }
+  ctx.restore();
+}
+
+/* ---------------------------------------------------------------------------------
+   10 & 11. RENDERING (hands) + HUD
+   --------------------------------------------------------------------------------- */
+function drawHandAura(ctx, lm, color, t) {
+  const cx = (lm[0].x + lm[5].x + lm[9].x + lm[13].x + lm[17].x) / 5;
+  const cy = (lm[0].y + lm[5].y + lm[9].y + lm[13].y + lm[17].y) / 5;
+  const r = handSize(lm) * 1.6 * (1 + Math.sin(t * 3) * 0.05);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const rg = ctx.createRadialGradient(cx, cy, r * 0.1, cx, cy, r);
+  rg.addColorStop(0, rgba(color, 0.10));
+  rg.addColorStop(1, rgba(color, 0));
+  ctx.fillStyle = rg;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  return { cx, cy, r };
+}
+
+function drawSkeleton(ctx, lm, t) {
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (const [a, b] of BONES) {
+    const col = boneColor(a, b);
+    const pa = lm[a], pb = lm[b];
+    // layered laser beam: wide soft glow -> mid -> bright core
+    for (const [w, alpha] of [[7, 0.10], [3.5, 0.28], [1.4, 0.85]]) {
+      ctx.lineWidth = w;
+      ctx.strokeStyle = rgba(col, alpha);
+      ctx.shadowBlur = 14;
+      ctx.shadowColor = rgba(col, alpha);
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+    }
+    // animated highlight pulse traveling along the bone
+    const travel = (Math.sin(t * 2.4 + a * 0.7) + 1) / 2;
+    const hx = pa.x + (pb.x - pa.x) * travel;
+    const hy = pa.y + (pb.y - pa.y) * travel;
+    ctx.fillStyle = rgba([255,255,255], 0.8);
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = 'rgba(255,255,255,0.9)';
+    ctx.beginPath(); ctx.arc(hx, hy, 1.8, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawJoints(ctx, lm, t) {
+  ctx.save();
+  for (let i = 0; i < lm.length; i++) {
+    const col = landmarkColor(i);
+    const isTip = Object.values(FINGERTIPS).includes(i);
+    const breathe = 1 + Math.sin(t * 3 + i * 0.5) * 0.18;
+    const baseSize = (i === 0 ? 9 : isTip ? 7 : 4.5) * breathe;
+
+    // outer bloom halo
+    ctx.shadowBlur = isTip ? 26 : 14;
+    ctx.shadowColor = rgba(col, 0.9);
+    ctx.fillStyle = rgba(col, 0.25);
+    ctx.beginPath(); ctx.arc(lm[i].x, lm[i].y, baseSize * 1.8, 0, Math.PI * 2); ctx.fill();
+
+    // ripple ring
+    const rippleT = (t * 1.5 + i * 0.3) % 1;
+    ctx.strokeStyle = rgba(col, (1 - rippleT) * 0.5);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(lm[i].x, lm[i].y, baseSize * (1 + rippleT * 1.6), 0, Math.PI * 2); ctx.stroke();
+
+    // inner bright core
+    ctx.fillStyle = rgba([255,255,255], 0.9);
+    ctx.shadowBlur = 6;
+    ctx.beginPath(); ctx.arc(lm[i].x, lm[i].y, baseSize * 0.35, 0, Math.PI * 2); ctx.fill();
+
+    // colored orb body
+    ctx.fillStyle = rgba(col, 0.9);
+    ctx.shadowBlur = isTip ? 20 : 10;
+    ctx.shadowColor = rgba(col, 1);
+    ctx.beginPath(); ctx.arc(lm[i].x, lm[i].y, baseSize * 0.65, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawCradle(ctx, leftLm, rightLm, t) {
+  const pairs = [['thumb','thumb'],['index','index'],['middle','middle'],['ring','ring'],['pinky','pinky']];
+  if (CFG.weaveExtra) {
+    pairs.push(['thumb','index'], ['index','thumb'], ['pinky','ring'], ['ring','pinky']);
+  }
+  let count = 0;
+  for (let i = 0; i < pairs.length; i++) {
+    const [fl, fr] = pairs[i];
+    const a = leftLm[FINGERTIPS[fl]];
+    const b = rightLm[FINGERTIPS[fr]];
+    const key = fl + '_' + fr;
+    if (!cradleSprings[key]) cradleSprings[key] = new CradleSpring(i * 1.7 + 0.4);
+    const ctrl = cradleSprings[key].update(a.x, a.y, b.x, b.y, t);
+
+    const span = dist2(a.x, a.y, b.x, b.y);
+    const maxSpan = width * 0.95;
+    const spanT = clamp(span / maxSpan, 0, 1);
+    const weight = 6 - spanT * 4.4;      // thick when close, thin+taut when stretched
+    const glow = 10 + (1 - spanT) * 14;
+    const col = neonCycle(t * 0.08 + i * 0.13 + spanT * 0.4);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    for (const [wMul, aMul] of [[2.4, 0.18], [1.3, 0.4], [0.6, 0.95]]) {
+      ctx.lineWidth = Math.max(0.6, weight * wMul);
+      ctx.strokeStyle = rgba(col, aMul);
+      ctx.shadowBlur = glow;
+      ctx.shadowColor = rgba(col, aMul);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.quadraticCurveTo(ctrl.x, ctrl.y, b.x, b.y);
+      ctx.stroke();
+    }
+    // flowing energy highlight along the curve
+    const travel = (t * 0.8 + i * 0.2) % 1;
+    const hx = (1-travel)*(1-travel)*a.x + 2*(1-travel)*travel*ctrl.x + travel*travel*b.x;
+    const hy = (1-travel)*(1-travel)*a.y + 2*(1-travel)*travel*ctrl.y + travel*travel*b.y;
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.arc(hx, hy, 2.2, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+
+    // touch detection -> explosion + shockwave
+    if (span < 26) {
+      triggerExplosion((a.x+b.x)/2, (a.y+b.y)/2, col);
+      triggerShockwave((a.x+b.x)/2, (a.y+b.y)/2, col);
+    }
+    count++;
+  }
+  return count;
+}
+
+// --- HUD update (throttled to ~10x/sec for perf) ---
+let hudTimer = 0;
+function updateHUD(fps, frameMs, handsCount, particles, strings, quality) {
+  hudTimer++;
+  if (hudTimer % 6 !== 0) return;
+  document.getElementById('hud-fps').textContent = fps.toFixed(0);
+  document.getElementById('hud-frametime').textContent = frameMs.toFixed(1) + ' ms';
+  document.getElementById('hud-hands').textContent = handsCount;
+  document.getElementById('hud-particles').textContent = particles;
+  document.getElementById('hud-strings').textContent = strings;
+  document.getElementById('hud-quality').textContent = quality.toFixed(0) + '%';
+  document.getElementById('hud-cpu').textContent = clamp((frameMs / 16.67) * 100, 0, 999).toFixed(0) + '%';
+}
+function updateGestureHUD(text) {
+  document.getElementById('hud-gesture-text').textContent = text;
+}
+function setHudStatusReady() { /* boot message already hidden separately */ }
+function showBoot(html) { const el = document.getElementById('boot-message'); el.innerHTML = html; el.classList.remove('hidden'); }
+function hideBoot() { document.getElementById('boot-message').classList.add('hidden'); }
+
+/* ---------------------------------------------------------------------------------
+   12. MAIN LOOP (p5.js drives requestAnimationFrame)
+   --------------------------------------------------------------------------------- */
+let lastFrameMs = 16.7;
+
+function setup() {
+  const cnv = createCanvas(windowWidth, windowHeight);
+  cnv.parent('stage');
+  pixelDensity(1);
+  frameRate(60);
+
+  video = createCapture({ video: { width: CFG.video.width, height: CFG.video.height, facingMode: 'user' } });
+  video.size(CFG.video.width, CFG.video.height);
+  video.hide();
+
+  initBackground();
+  initHands();
+
+  // Audio requires a user gesture to start in most browsers
+  const unlock = () => { ensureAudio(); if (audioCtx.state === 'suspended') audioCtx.resume(); };
+  window.addEventListener('pointerdown', unlock, { once: true });
+  window.addEventListener('keydown', unlock, { once: true });
+
+  document.getElementById('mute-btn').addEventListener('click', (e) => {
+    ensureAudio();
+    audioMuted = !audioMuted;
+    e.target.textContent = audioMuted ? '🔇 AUDIO OFF' : '🔊 AUDIO ON';
+  });
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  initBackground();
+}
+
+function draw() {
+  const frameStart = performance.now();
+  const t = millis() * 0.001;
+
+  // screen shake offset
+  const shakeX = screenShake > 0 ? (Math.random() - 0.5) * screenShake : 0;
+  const shakeY = screenShake > 0 ? (Math.random() - 0.5) * screenShake : 0;
+  screenShake *= 0.85;
+  if (screenShake < 0.05) screenShake = 0;
+
+  const ctx = drawingContext;
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
+  drawBackground(ctx, t);
+
+  const smoothedHands = getSmoothedScreenHands();
+  let strings = 0;
+  let qualitySum = 0;
+
+  for (const h of smoothedHands) {
+    const col = h.label === 'Left' ? [41,121,255] : [255,0,230];
+    drawHandAura(ctx, h.landmarks, col, t);
+    drawSkeleton(ctx, h.landmarks, t);
+    drawJoints(ctx, h.landmarks, t);
+    qualitySum += h.score * 100;
+
+    // gesture recognition + edge-triggered effects
+    const g = recognizeGesture(h.landmarks, h.label);
+    const prev = activeGestures[h.label];
+    activeGestures[h.label] = g.name;
+
+    const tip = h.landmarks[8];
+    const palmCenter = {
+      x: (h.landmarks[0].x + h.landmarks[9].x) / 2,
+      y: (h.landmarks[0].y + h.landmarks[9].y) / 2
+    };
+    const hs = handSize(h.landmarks);
+
+    if (g.name === 'POINT') {
+      const dirX = h.landmarks[8].x - h.landmarks[5].x;
+      const dirY = h.landmarks[8].y - h.landmarks[5].y;
+      const ang = Math.atan2(dirY, dirX);
+      if (frameCount % 4 === 0) fireLaser(tip.x, tip.y, ang, col);
+    }
+    if (g.name === 'PINCH') {
+      drawLightningArc(ctx, h.landmarks[4].x, h.landmarks[4].y, h.landmarks[8].x, h.landmarks[8].y, col, h.label === 'Left' ? 1 : 2);
+      if (prev !== 'PINCH') spawnParticles(tip.x, tip.y, col, 8, { speed: 2, life: 20 });
+    }
+    if (g.name === 'OPEN-PALM') {
+      drawShield(ctx, palmCenter.x, palmCenter.y, hs * 1.4, col, t);
+    }
+    if (g.name === 'FIST' && prev !== 'FIST') {
+      triggerShockwave(palmCenter.x, palmCenter.y, col);
+      screenFlash = Math.min(1, screenFlash + 0.15);
+    }
+  }
+
+  // Cat's cradle strings only when both hands present
+  const left = smoothedHands.find(h => h.label === 'Left');
+  const right = smoothedHands.find(h => h.label === 'Right');
+  if (left && right) {
+    strings = drawCradle(ctx, left.landmarks, right.landmarks, t);
+  }
+
+  updateAndDrawShockwaves(ctx);
+  updateAndDrawLasers(ctx);
+  updateAndDrawParticles(ctx);
+
+  // screen flash (with a cheap chromatic-aberration-style triple pass)
+  if (screenFlash > 0.001) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = `rgba(255,60,60,${screenFlash * 0.10})`;
+    ctx.fillRect(-4, 0, width, height);
+    ctx.fillStyle = `rgba(60,255,180,${screenFlash * 0.10})`;
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = `rgba(60,140,255,${screenFlash * 0.10})`;
+    ctx.fillRect(4, 0, width, height);
+    ctx.restore();
+    screenFlash *= 0.88;
+    if (screenFlash < 0.01) screenFlash = 0;
+  }
+
+  drawVignetteAndGrain(ctx, t);
+  ctx.restore();
+
+  // gesture HUD text
+  if (smoothedHands.length === 0) {
+    updateGestureHUD('NO HANDS DETECTED');
+  } else {
+    const parts = smoothedHands.map(h => `${h.label.toUpperCase()}: ${activeGestures[h.label] || 'NEUTRAL'}`);
+    updateGestureHUD(parts.join('   //   '));
+  }
+
+  const frameMs = performance.now() - frameStart;
+  lastFrameMs = lastFrameMs * 0.9 + frameMs * 0.1;
+  const fps = 1000 / Math.max(1, lastFrameMs);
+  const quality = smoothedHands.length ? qualitySum / smoothedHands.length : 0;
+  updateHUD(fps, lastFrameMs, smoothedHands.length, particlePool.activeCount(), strings, quality);
+}
+</script>
+</body>
+</html>
